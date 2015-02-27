@@ -29,9 +29,9 @@ def setup(test_file):
     # `edge` additionally contains the residual edges
     db.execute("""
         INSERT INTO edge(src, dst, capacity)
-          SELECT dst, src, 0 FROM original_edge O
+          SELECT dst, src, 0 FROM original_edge
           WHERE NOT EXISTS(SELECT * FROM original_edge E 
-            WHERE E.src = O.dst AND E.dst = O.src);
+            WHERE E.src = dst AND E.dst = src);
     """)
 
     # Handy view that maps edge ids to their reversed id
@@ -81,9 +81,12 @@ def maxflow(bfs_max_iterations=float('inf'), flow_max_iterations=float('inf')):
             # Hints: a JOIN would be helpful here. Also check the documentation to
             # see how array concatenation work in Postgres.
             db.execute("""
-                    SELECT ???
+                    SELECT array_append(paths.path,edge.id) as path,array_append(paths.nodes,edge.dst) as nodes
                     INTO tmp
-                    ???;
+                    FROM paths,edge
+		    WHERE edge.src=paths.nodes[array_length(paths.nodes,1)]
+		    AND NOT array_fill(edge.dst,ARRAY[1]) <@ paths.nodes
+		    AND edge.capacity <> 0;
 
                     DROP TABLE IF EXISTS paths CASCADE;
                     ALTER TABLE tmp RENAME TO paths;
@@ -118,7 +121,8 @@ def maxflow(bfs_max_iterations=float('inf'), flow_max_iterations=float('inf')):
                 SELECT unnest(path) AS path_edge FROM chosen_route
             ),
             constraining_capacity(capacity) AS (
-                ???
+                SELECT MIN(edge.capacity) AS capacity 
+		FROM path_edges,edge WHERE edge.id=path_edges.path_edge 
             )
             SELECT path_edge AS edge_id, (SELECT * FROM constraining_capacity) as flow 
             INTO flow_to_route FROM path_edges;
@@ -128,12 +132,12 @@ def maxflow(bfs_max_iterations=float('inf'), flow_max_iterations=float('inf')):
         # Then, update the `edges` table
         db.execute("""
             WITH updates(id, new_capacity) AS (
-                ???
+                SELECT edge_id,edge.capacity-flow as new_capacity FROM flow_to_route,edge WHERE flow_to_route.edge_id=edge.id
             )
             UPDATE edge
-              SET ???
+              SET capacity=updates.new_capacity
               FROM updates
-              WHERE ???;
+              WHERE updates.id=edge.id;
             """)
 
         # DO NOT EDIT
